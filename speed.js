@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         倍速播放脚本
 // @namespace    http://tampermonkey.net/
-// @version      1.0
-// @description  在网页上实现倍速播放功能，支持动态调整倍速和浮动提示
+// @version      1.1
+// @description  在网页上实现倍速播放功能，支持动态调整倍速和浮动提示，支持单页应用
 // @license MIT
 // @author       diyun
 // @include      http://*/*
@@ -14,22 +14,85 @@
 (function () {
     "use strict";
 
+    let currentUrl = location.href;
+    let videoObserver = null;
+    let keydownListener = null;
+    let keyupListener = null;
+    let urlObserver = null;
+    let videoChangeObserver = null;
+    let activeObservers = new Set();
+
+    // 完整的清理函数
+    function cleanup() {
+        // 清理所有事件监听器
+        if (keydownListener) {
+            document.removeEventListener("keydown", keydownListener, true);
+            keydownListener = null;
+        }
+        if (keyupListener) {
+            document.removeEventListener("keyup", keyupListener, true);
+            keyupListener = null;
+        }
+
+        // 清理所有观察器
+        activeObservers.forEach(observer => {
+            if (observer && observer.disconnect) {
+                observer.disconnect();
+            }
+        });
+        activeObservers.clear();
+
+        videoObserver = null;
+        urlObserver = null;
+        videoChangeObserver = null;
+    }
+
     // 等待视频元素加载
     function waitForVideoElement() {
-        return new Promise((resolve) => {
-            const observer = new MutationObserver((mutations, obs) => {
+        return new Promise((resolve, reject) => {
+            const maxAttempts = 10;
+            let attempts = 0;
+
+            const checkVideo = () => {
                 const video = document.querySelector("video");
+                if (video && video.readyState >= 1) {
+                    return video;
+                }
+                return null;
+            };
+
+            // 立即检查
+            const video = checkVideo();
+            if (video) {
+                resolve(video);
+                return;
+            }
+
+            // 创建观察器
+            const observer = new MutationObserver(() => {
+                attempts++;
+                const video = checkVideo();
                 if (video) {
-                    obs.disconnect(); // 停止观察
+                    observer.disconnect();
                     resolve(video);
+                } else if (attempts >= maxAttempts) {
+                    observer.disconnect();
+                    reject(new Error("未能找到视频元素"));
                 }
             });
 
-            // 监听整个文档的变化
             observer.observe(document.body, {
                 childList: true,
                 subtree: true,
             });
+            activeObservers.add(observer);
+
+            // 设置超时
+            setTimeout(() => {
+                observer.disconnect();
+                activeObservers.delete(observer);
+                reject(new Error("等待视频元素超时"));
+            }, 10000);
         });
     }
 
@@ -65,62 +128,79 @@
 
     // 初始化脚本
     async function init() {
-        const video = await waitForVideoElement();
-        console.log("找到视频元素：", video);
+        cleanup();
 
-        const key = "ArrowRight"; // 监听的按键
-        const increaseKey = "Equal"; // + 键
-        const decreaseKey = "Minus"; // - 键
-        const rate1 = 1; // 正常速度
-        let rate2 = 2; // 默认倍速
-        let downCount = 0; // 按键按下计数器
-        let currentRate = video.playbackRate; // 保存当前播放速度
+        try {
+            const video = await waitForVideoElement();
+            console.log("找到视频元素：", video);
 
-        // 监听按键按下事件
-        document.addEventListener(
-            "keydown",
-            (e) => {
-                // 长按 ArrowRight 键：以 rate2 倍速播放
+            const key = "ArrowRight"; // 监听的按键
+            const increaseKey = "Equal"; // + 键
+            const decreaseKey = "Minus"; // - 键
+            let targetRate = 2; // 目标倍速
+            let downCount = 0; // 按键按下计数器
+            let originalRate = video.playbackRate; // 保存原始播放速度
+
+            // 监听视频元素变化
+            if (video.parentElement) {
+                videoChangeObserver = new MutationObserver((mutations) => {
+                    const hasVideoChanges = mutations.some(mutation => 
+                        Array.from(mutation.removedNodes).some(node => node.tagName === 'VIDEO') ||
+                        Array.from(mutation.addedNodes).some(node => node.tagName === 'VIDEO')
+                    );
+
+                    if (hasVideoChanges) {
+                        console.log("视频元素变化，重新初始化");
+                        cleanup();
+                        init().catch(console.error);
+                    }
+                });
+
+                videoChangeObserver.observe(video.parentElement, {
+                    childList: true,
+                    subtree: true
+                });
+                activeObservers.add(videoChangeObserver);
+            }
+
+            // 创建新的事件监听器
+            keydownListener = (e) => {
+                // 长按 ArrowRight 键：以 targetRate 倍速播放
                 if (e.code === key) {
                     e.preventDefault(); // 阻止默认行为
                     e.stopImmediatePropagation(); // 阻止其他事件监听器
                     downCount++;
 
-                    // 当按键按下次数为2时（长按），设置为 rate2 倍速
+                    // 当按键按下次数为2时（长按），设置为 targetRate 倍速
                     if (downCount === 2) {
-                        currentRate = video.playbackRate;
-                        video.playbackRate = rate2;
-                        showFloatingMessage(`开始 ${rate2} 倍速播放`);
+                        originalRate = video.playbackRate;
+                        video.playbackRate = targetRate;
+                        showFloatingMessage(`开始 ${targetRate} 倍速播放`);
                     }
                 }
 
-                // 按 + 键：增加 rate2 的值
+                // 按 + 键：增加 targetRate 的值
                 if (e.code === increaseKey) {
                     e.preventDefault();
                     e.stopImmediatePropagation();
-                    rate2 += 0.5;
-                    showFloatingMessage(`下次倍速：${rate2}`);
+                    targetRate += 0.5;
+                    showFloatingMessage(`下次倍速：${targetRate}`);
                 }
 
-                // 按 - 键：减少 rate2 的值
+                // 按 - 键：减少 targetRate 的值
                 if (e.code === decreaseKey) {
                     e.preventDefault();
                     e.stopImmediatePropagation();
-                    if (rate2 > 0.5) {
-                        rate2 -= 0.5;
-                        showFloatingMessage(`下次倍速：${rate2}`);
+                    if (targetRate > 0.5) {
+                        targetRate -= 0.5;
+                        showFloatingMessage(`下次倍速：${targetRate}`);
                     } else {
                         showFloatingMessage("倍速已达到最小值 0.5");
                     }
                 }
-            },
-            true // 使用捕获阶段，确保屏蔽原有功能
-        );
+            };
 
-        // 监听按键释放事件
-        document.addEventListener(
-            "keyup",
-            (e) => {
+            keyupListener = (e) => {
                 if (e.code !== key) {
                     return; // 如果不是目标按键，直接返回
                 }
@@ -135,16 +215,92 @@
 
                 // 长按 ArrowRight 键：恢复原速
                 if (downCount >= 2) {
-                    video.playbackRate = currentRate;
-                    showFloatingMessage(`恢复 ${currentRate} 倍速播放`);
+                    video.playbackRate = originalRate;
+                    showFloatingMessage(`恢复 ${originalRate} 倍速播放`);
                 }
 
                 downCount = 0; // 重置按下计数
-            },
-            true
-        );
+            };
+
+            // 绑定事件监听器
+            document.addEventListener("keydown", keydownListener, true);
+            document.addEventListener("keyup", keyupListener, true);
+
+            return true;
+        } catch (error) {
+            console.error("初始化失败:", error);
+            return false;
+        }
+    }
+
+    // 监听 URL 变化
+    function watchUrlChange() {
+        urlObserver = new MutationObserver(() => {
+            if (location.href !== currentUrl) {
+                currentUrl = location.href;
+                console.log("URL变化，重新初始化");
+                cleanup();
+                setTimeout(() => init().catch(console.error), 1000);
+            }
+        });
+
+        urlObserver.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+        activeObservers.add(urlObserver);
+
+        // 增强的 History API 监听
+        const handleStateChange = () => {
+            if (location.href !== currentUrl) {
+                currentUrl = location.href;
+                cleanup();
+                setTimeout(() => init().catch(console.error), 1000);
+            }
+        };
+
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+
+        history.pushState = function() {
+            originalPushState.apply(this, arguments);
+            handleStateChange();
+        };
+
+        history.replaceState = function() {
+            originalReplaceState.apply(this, arguments);
+            handleStateChange();
+        };
+
+        window.addEventListener('popstate', handleStateChange);
     }
 
     // 启动脚本
-    init();
+    const startScript = async () => {
+        let retryCount = 0;
+        const maxRetries = 3;
+
+        const tryInit = async () => {
+            try {
+                const success = await init();
+                if (success) {
+                    watchUrlChange();
+                } else if (retryCount < maxRetries) {
+                    retryCount++;
+                    console.log(`初始化重试 (${retryCount}/${maxRetries})`);
+                    setTimeout(tryInit, 2000);
+                }
+            } catch (error) {
+                console.error("启动失败:", error);
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    setTimeout(tryInit, 2000);
+                }
+            }
+        };
+
+        tryInit();
+    };
+
+    startScript();
 })();
