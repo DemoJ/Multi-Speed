@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         倍速播放脚本
+// @name         视频倍速播放
 // @namespace    http://tampermonkey.net/
-// @version      1.1
-// @description  在网页上实现倍速播放功能，支持动态调整倍速和浮动提示，支持单页应用
+// @version      1.2
+// @description  长按右方向键倍速播放，松开恢复原速，按 + 键增加倍速，按 - 键减少倍速，单击右方向键快进5秒。适配大部分网页播放器，尤其适配jellyfin等播放器播放nas内容。
 // @license MIT
 // @author       diyun
 // @include      http://*/*
@@ -77,7 +77,8 @@
                     resolve(video);
                 } else if (attempts >= maxAttempts) {
                     observer.disconnect();
-                    reject(new Error("未能找到视频元素"));
+                    console.warn("未找到视频元素，脚本已停止运行");
+                    reject({ type: "no_video" }); // 使用对象替代 Error
                 }
             });
 
@@ -91,7 +92,8 @@
             setTimeout(() => {
                 observer.disconnect();
                 activeObservers.delete(observer);
-                reject(new Error("等待视频元素超时"));
+                console.warn("等待视频元素超时，脚本已停止运行");
+                reject({ type: "timeout" }); // 使用对象替代 Error
             }, 10000);
         });
     }
@@ -287,11 +289,15 @@
                     watchUrlChange();
                 } else if (retryCount < maxRetries) {
                     retryCount++;
-                    console.log(`初始化重试 (${retryCount}/${maxRetries})`);
+                    console.warn(`初始化重试 (${retryCount}/${maxRetries})`); // 改为警告
                     setTimeout(tryInit, 2000);
                 }
             } catch (error) {
-                console.error("启动失败:", error);
+                // 检查错误类型
+                if (error && (error.type === "no_video" || error.type === "timeout")) {
+                    return; // 直接返回，不做额外处理
+                }
+                console.warn("启动失败:", error);
                 if (retryCount < maxRetries) {
                     retryCount++;
                     setTimeout(tryInit, 2000);
