@@ -202,7 +202,7 @@
                 if (e.code === quickDecreaseKey) {
                     e.preventDefault();
                     e.stopImmediatePropagation();
-                    if (currentQuickRate > 1.0) {
+                    if (currentQuickRate > 0.5) {
                         currentQuickRate -= 0.5;
                         video.playbackRate = currentQuickRate;
                         showFloatingMessage(`当前播放速度：${currentQuickRate}x`);
