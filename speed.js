@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         视频倍速播放
 // @namespace    http://tampermonkey.net/
-// @version      1.2
-// @description  长按右方向键倍速播放，松开恢复原速，按 + 键增加倍速，按 - 键减少倍速，单击右方向键快进5秒。适配大部分网页播放器，尤其适配jellyfin等播放器播放nas内容。
+// @version      1.3
+// @description  长按右方向键倍速播放，松开恢复原速，按 + 键增加倍速，按 - 键减少倍速，单击右方向键快进5秒。 按]键自动增加0.5倍速开始播放，按[键减少当前播放倍速，按P键恢复1.0倍速。适配大部分网页播放器，尤其适配jellyfin等播放器播放nas内容。
 // @license MIT
 // @author       diyun
 // @include      http://*/*
@@ -139,7 +139,11 @@
             const key = "ArrowRight"; // 监听的按键
             const increaseKey = "Equal"; // + 键
             const decreaseKey = "Minus"; // - 键
+            const quickIncreaseKey = "BracketRight"; // 】键
+            const quickDecreaseKey = "BracketLeft"; // 【键
+            const resetSpeedKey = "KeyP"; // P键
             let targetRate = 2; // 目标倍速
+            let currentQuickRate = 1.0; // 当前快速倍速
             let downCount = 0; // 按键按下计数器
             let originalRate = video.playbackRate; // 保存原始播放速度
 
@@ -179,6 +183,39 @@
                         video.playbackRate = targetRate;
                         showFloatingMessage(`开始 ${targetRate} 倍速播放`);
                     }
+                }
+
+                // 按】键增加当前播放倍速
+                if (e.code === quickIncreaseKey) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (currentQuickRate === 1.0) {
+                        currentQuickRate = 1.5;
+                    } else {
+                        currentQuickRate += 0.5;
+                    }
+                    video.playbackRate = currentQuickRate;
+                    showFloatingMessage(`当前播放速度：${currentQuickRate}x`);
+                }
+
+                // 按【键减少当前播放倍速
+                if (e.code === quickDecreaseKey) {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (currentQuickRate > 1.0) {
+                        currentQuickRate -= 0.5;
+                        video.playbackRate = currentQuickRate;
+                        showFloatingMessage(`当前播放速度：${currentQuickRate}x`);
+                    }
+                }
+
+                // 按P键恢复1.0倍速
+                if (e.code === resetSpeedKey || e.key.toLowerCase() === 'p') {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    currentQuickRate = 1.0;
+                    video.playbackRate = 1.0;
+                    showFloatingMessage('恢复正常播放速度');
                 }
 
                 // 按 + 键：增加 targetRate 的值
