@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         视频倍速播放
 // @namespace    http://tampermonkey.net/
-// @version      1.3.2
+// @version      1.3.3
 // @description  长按右方向键倍速播放，松开恢复原速，按 + 键增加倍速，按 - 键减少倍速，单击右方向键快进5秒。 按 ] 键从 1.5 倍速开始，每按一次增加 0.5 倍速，按 [ 键每次减少 0.5 倍速，按P键恢复1.0倍速。适配大部分网页播放器，尤其适配jellyfin等播放器播放nas内容。
 // @license MIT
 // @author       diyun
@@ -149,8 +149,9 @@
         const resetSpeedKey = "KeyP"; // P键
         let targetRate = 2; // 目标倍速
         let currentQuickRate = 1.0; // 当前快速倍速
-        let downCount = 0; // 按键按下计数器
+        let keyDownTime = 0; // 添加按键开始时间记录
         let originalRate = video.playbackRate; // 保存原始播放速度
+        let isSpeedUp = false; // 添加一个标记来跟踪是否处于加速状态
         // 监听视频元素变化
         if (video.parentElement) {
           videoChangeObserver = new MutationObserver((mutations) => {
@@ -177,13 +178,18 @@
         }
         // 创建新的事件监听器
         keydownListener = (e) => {
-          // 长按 ArrowRight 键：以 targetRate 倍速播放
           if (e.code === key) {
-            e.preventDefault(); // 阻止默认行为
-            e.stopImmediatePropagation(); // 阻止其他事件监听器
-            downCount++;
-            // 当按键按下次数为2时（长按），设置为 targetRate 倍速
-            if (downCount === 2) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            
+            // 记录按下时间
+            if (!keyDownTime) {
+              keyDownTime = Date.now();
+            }
+            
+            // 如果按下超过300ms，认为是长按，进入加速模式
+            if (!isSpeedUp && Date.now() - keyDownTime > 300) {
+              isSpeedUp = true;
               originalRate = video.playbackRate;
               video.playbackRate = targetRate;
               showFloatingMessage(`开始 ${targetRate} 倍速播放`);
@@ -239,21 +245,27 @@
           }
         };
         keyupListener = (e) => {
-          if (e.code !== key) {
-            return; // 如果不是目标按键，直接返回
+          if (e.code === key) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            
+            const pressTime = Date.now() - keyDownTime;
+            
+            // 如果按下时间小于300ms，认为是点击，快进5秒
+            if (pressTime < 300) {
+              video.currentTime += 5;
+            }
+            
+            // 如果处于加速状态，恢复原速
+            if (isSpeedUp) {
+              video.playbackRate = originalRate;
+              showFloatingMessage(`恢复 ${originalRate} 倍速播放`);
+              isSpeedUp = false;
+            }
+            
+            // 重置状态
+            keyDownTime = 0;
           }
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          // 单击 ArrowRight 键：跳转5秒
-          if (downCount === 1) {
-            video.currentTime += 5;
-          }
-          // 长按 ArrowRight 键：恢复原速
-          if (downCount >= 2) {
-            video.playbackRate = originalRate;
-            showFloatingMessage(`恢复 ${originalRate} 倍速播放`);
-          }
-          downCount = 0; // 重置按下计数
         };
         // 绑定事件监听器
         document.addEventListener("keydown", keydownListener, true);
